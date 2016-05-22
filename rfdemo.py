@@ -39,7 +39,7 @@ def scan_for_test():
         if os.path.isfile(fname) and 0 == cmp(os.path.splitext(fname)[1],'.jpg'):
             paths.append(fname)
             num += 1
-            if num > 1000:
+            if num > 100000:
                 break
     print ''
     df = pd.DataFrame( {'path':paths} )
@@ -100,39 +100,44 @@ def test():
     print 'load test set'
     df = scan_for_test()
     print 'gen feature for test set'
-    X = gen_feature(df)
-    print 'run clf'
-    workers = np.minimum(mp.cpu_count(), len(X))
-    X_list = [[] for k in range(workers)]
-    name_list = [[] for k in range(workers)]
-    idx = 0
-    for k in range(len(X)):
-        X_list[idx].append( X[k] )
-        name_list[idx].append( df.path[k].split('\\')[-1] )
-        idx  += 1
-        if idx >= workers:
-            idx = 0
 
-    del X
+    df_list = np.array_split(df,10)
+    del df
     gc.collect()
 
-    clf_path = os.path.join(g_config._tmpdir, 'rf.pkl')
-    pool = mp.Pool(workers)
-    ret_list = pool.map( _test, [(clf_path, Xs, names) for Xs, names in zip(X_list, name_list)])
-    pool.close()
-  
-
-    name_list = []
+    img_list = []
     results = [[] for k in range(len(label_list))]
-    for ret in ret_list:
-        for k in range(len(label_list)):
-            results[k].extend(ret[0][k])
-        name_list.extend(ret[1])
+    df_offset = 0
+    for groupidx,df in enumerate(df_list):
+        X = gen_feature(df)
+        print 'run clf on group %d'%groupidx
+        workers = np.minimum(mp.cpu_count(), len(X))
+        X_list = [[] for k in range(workers)]
+        name_list = [[] for k in range(workers)]
+        idx = 0
+        for k in range(len(X)):
+            X_list[idx].append( X[k] )
+            name_list[idx].append( df.path[k + df_offset].split('\\')[-1] )
+            idx  += 1
+            if idx >= workers:
+                idx = 0
+        df_offset += df.shape[0]
+
+        clf_path = os.path.join(g_config._tmpdir, 'rf.pkl')
+        pool = mp.Pool(workers)
+        ret_list = pool.map( _test, [(clf_path, Xs, names) for Xs, names in zip(X_list, name_list)])
+        pool.close()
+
+        for ret in ret_list:
+            for k in range(len(label_list)):
+                results[k].extend(ret[0][k])
+            img_list.extend(ret[1])
 
     c0,c1,c2,c3,c4,c5,c6,c7,c8,c9 = results
-    sub = pd.DataFrame({'img':name_list,
+    sub = pd.DataFrame({'img':img_list,
     'c0':c0, 'c1':c1, 'c2':c2, 'c3':c3, 'c4':c4, 'c5':c5, 'c6':c6,
     'c7':c7, 'c8':c8, 'c9':c9})
+    sub = sub.sort('img')
     resultfile =  'submission_%s.csv'%datetime.datetime.now().strftime('%Y%m%d%H%M%S')
     resultfile = os.path.join( g_config._submission_dir, resultfile)
     sub['img,c0,c1,c2,c3,c4,c5,c6,c7,c8,c9'.split(',')].to_csv(resultfile, index=False)
